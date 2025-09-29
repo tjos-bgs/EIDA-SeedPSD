@@ -117,9 +117,9 @@ docker compose run --rm seedpsd-worker \
 
 ## Docker images & entrypoints
 
-This Dockerfile replaces the old Dockerfile in the checked out Git repo in the Git directory. This workaround is done because the Ansible module `community.docker.docker_compose_v2` doesn't recognise the ADD command in the old Dockerfile and the new Dockerfile replaces it with COPY. Images are built from the upstream repo with a local **`files/seedpsd/Dockerfile`** that:
+This Dockerfile replaces the old Dockerfile in the checked out Git repo in the Git directory. This workaround is done because the Ansible module `community.docker.docker_compose_v2` doesn't recognise the ADD command in the old Dockerfile and the new Dockerfile replaces it with COPY. Bumped up the version of Python in the Dockerfile from v3.11-slim to v3.13-slim (v3.11-slim has 2 high vulnerabilities). Images are built from the upstream repo with a local **`files/seedpsd/Dockerfile`** that:
 
-- Uses Python 3.11 and **uv** for fast locked installs
+- Uses Python 3.13-slim and **uv** for fast locked installs
 - Builds as **unprivileged `app`** user at runtime
 - Exposes `/app/.venv/bin` first in `PATH`
 - Defers command selection to Compose (see below)
