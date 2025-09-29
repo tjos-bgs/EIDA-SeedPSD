@@ -1,0 +1,15 @@
+---
+- name: Playbook
+  hosts: "{{ target | default('all') }}"
+  become: true
+
+  vars_files:
+    - vars/vars.yml
+
+# Configure server for EIDA-seedpsd
+  tasks:
+    - name: Setup SeedPSD
+      become_user: <username> # eg. eida
+      ansible.builtin.import_tasks: tasks/seedpsd_setup.yml
+      tags:
+        - spsd

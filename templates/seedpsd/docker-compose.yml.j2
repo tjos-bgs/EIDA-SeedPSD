@@ -1,0 +1,55 @@
+services:
+  seedpsd-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "{{ seedpsd_db_superuser }}"
+      POSTGRES_PASSWORD: "{{ seedpsd_db_superpass }}"
+    volumes:
+      - {{ seedpsd_db_dir }}:/var/lib/postgresql/data
+      - {{ seedpsd_initdb_dir }}:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ seedpsd_db_superuser }} -d postgres || exit 1"]
+      interval: "10s"
+      timeout: "5s"
+      retries: 20
+      start_period: "20s"
+
+  # Read/Write service for ingestion & admin CLI (uses seedpsd role)
+  seedpsd-worker:
+    build:
+      context: "{{ seedpsd_git_dir }}"
+    env_file:
+      - ./config/.env.worker
+    depends_on:
+      seedpsd-db:
+        condition: service_healthy
+    volumes:
+      - {{ seedpsd_lib_dir }}:/var/lib/seedpsd
+      - {{ gpfs_dir }}:{{ internal_archive_sds_mnt }}:ro
+
+  # Read-only web API/UI (uses wspsd role)
+  seedpsd-web:
+    build:
+      context: "{{ seedpsd_git_dir }}"
+    env_file:
+      - ./config/.env.web
+    depends_on:
+      seedpsd-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:{{ seedpsd_listen_port }}:8000"
+    restart: unless-stopped
+    volumes:
+      - {{ seedpsd_lib_dir }}:/var/lib/seedpsd
+      - {{ gpfs_dir }}:{{ internal_archive_sds_mnt }}:ro
+    command: ["/app/.venv/bin/seedpsd-cli", "server", "web", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/ >/dev/null || exit 1"]
+      interval: "15s"
+      timeout: "5s"
+      retries: 10
+      start_period: "20s"
+
+volumes:
+  db:

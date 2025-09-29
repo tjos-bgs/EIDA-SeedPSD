@@ -1,0 +1,51 @@
+-- Initial database and role setup for SeedPSD
+
+-- Create main application role (privileged) with safe quoting
+DO $$
+BEGIN
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ seedpsd_db_rw_user }}') THEN
+      EXECUTE format(
+         'CREATE ROLE %I LOGIN PASSWORD %L',
+         '{{ seedpsd_db_rw_user }}',
+         '{{ seedpsd_db_rw_pass }}'
+      );
+   END IF;
+END
+$$;
+
+-- Create webinterface role (unprivileged) with safe quoting
+DO $$
+BEGIN
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ seedpsd_db_ro_user }}') THEN
+      EXECUTE format(
+         'CREATE ROLE %I LOGIN PASSWORD %L',
+         '{{ seedpsd_db_ro_user }}',
+         '{{ seedpsd_db_ro_pass }}'
+      );
+   END IF;
+END
+$$;
+
+-- Create database owned by the RW user (must NOT be in a DO block)
+-- Use \gexec so CREATE DATABASE runs only if needed
+SELECT format(
+   'CREATE DATABASE %I OWNER %I TEMPLATE template0 ENCODING ''UTF8''',
+   '{{ seedpsd_db_name }}',
+   '{{ seedpsd_db_rw_user }}'
+)
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ seedpsd_db_name }}')
+\gexec
+
+-- Switch to the target DB (user is optional; we're superuser during init anyway)
+\connect {{ seedpsd_db_name }}
+
+-- Allow RO user to connect to the DB
+GRANT CONNECT ON DATABASE {{ seedpsd_db_name }} TO {{ seedpsd_db_ro_user }};
+
+-- Ensure RO user can use the public schema (existing objects)
+GRANT USAGE ON SCHEMA public TO {{ seedpsd_db_ro_user }};
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{ seedpsd_db_ro_user }};
+
+-- Set future-defaults for objects created by the RW user
+ALTER DEFAULT PRIVILEGES FOR ROLE {{ seedpsd_db_rw_user }} GRANT USAGE ON SCHEMAS TO {{ seedpsd_db_ro_user }};
+ALTER DEFAULT PRIVILEGES FOR ROLE {{ seedpsd_db_rw_user }} IN SCHEMA public GRANT SELECT ON TABLES TO {{ seedpsd_db_ro_user }};

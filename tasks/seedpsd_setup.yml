@@ -1,0 +1,188 @@
+---
+- name: Create SeedPSD base directory
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ owner_name }}"
+    group: "{{ group_name }}"
+  loop:
+    - "{{ seedpsd_dir }}"
+    - "{{ seedpsd_git_dir }}"
+    - "{{ seedpsd_config_dir }}"
+    - "{{ seedpsd_initdb_dir }}"
+    - "{{ seedpsd_log_dir }}"
+    - "{{ seedpsd_lib_dir }}"
+
+##### Uncomment on first run; comment back after directory is created and postgres is running #####
+# - name: Create directory for Postgres DB
+#   file:
+#     path: "{{ seedpsd_db_dir }}"
+#     state: directory
+#     owner: "{{ owner_name }}"
+#     group: "{{ group_name }}"
+
+- name: Checkout SeedPSD GitHub repository
+  git:
+    repo: "{{ seedpsd_git_repo }}"
+    dest: "{{ seedpsd_git_dir }}"
+    version: main
+    force: true
+
+##### Workaround for seedpsd Dockerfile; has checksum issue as of 17/9/2025 #####
+##### Remove old Dockerfile #####
+- name: Remove old Dockerfile
+  ansible.builtin.file:
+    path: "{{ seedpsd_git_dir }}/Dockerfile"
+    state: absent
+
+##### Replace old Dockerfile #####
+- name: Copy Dockerfile to replace old Dockerfile 
+  copy:
+    src: seedpsd/Dockerfile
+    dest: "{{ seedpsd_git_dir }}/Dockerfile"
+
+- name: Render web env file
+  template:
+    src: templates/seedpsd/.env.web.j2
+    dest: "{{ seedpsd_config_dir }}/.env.web"
+    mode: "0600"
+
+- name: Render worker env file
+  template:
+    src: templates/seedpsd/.env.worker.j2
+    dest: "{{ seedpsd_config_dir }}/.env.worker"
+    mode: "0600"
+
+- name: Render postgres SQL file
+  template:
+    src: templates/seedpsd/00_seedpsd.sql.j2
+    dest: "{{ seedpsd_initdb_dir }}/00_seedpsd.sql"
+
+- name: Render docker compose file
+  template:
+    src: templates/seedpsd/docker-compose.yml.j2
+    dest: "{{ seedpsd_dir }}/docker-compose.yml"
+
+# --- DB up first ---
+- name: Bring up Postgres (only)
+  community.docker.docker_compose_v2:
+    project_src: "{{ seedpsd_dir }}"
+    state: present
+    pull: always
+    recreate: auto
+    services:
+      - seedpsd-db
+
+- name: Wait for Postgres to accept connections
+  ansible.builtin.command: >
+    /usr/bin/docker compose -f {{ seedpsd_dir }}/docker-compose.yml
+    exec -T seedpsd-db pg_isready -U {{ seedpsd_db_superuser }} -d postgres
+  register: _pg_ready
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: _pg_ready.rc == 0
+
+##### The next 6 tasks are to be used on fresh setup to initialise data; uncomment on fresh setup #####
+# # --- SeedPSD bootstrap: CREATE BASE SCHEMA ---
+# - name: SeedPSD admin create (bootstrap base schema; idempotent)
+#   ansible.builtin.command: >
+#     /usr/bin/docker compose -f {{ seedpsd_dir }}/docker-compose.yml
+#     run --rm seedpsd-worker /bin/sh -lc '/app/.venv/bin/seedpsd-cli admin create'
+#   register: seedpsd_create
+#   changed_when: seedpsd_create.rc == 0
+#   failed_when: seedpsd_create.rc not in [0]
+# - debug:
+#     msg:
+#       - "admin create rc: {{ seedpsd_create.rc }}"
+#       - "stdout: {{ seedpsd_create.stdout | default('') }}"
+#       - "stderr: {{ seedpsd_create.stderr | default('') }}"
+
+# # --- Then migrations to HEAD ---
+# - name: Run DB migrations (idempotent)
+#   ansible.builtin.command: >
+#     /usr/bin/docker compose -f {{ seedpsd_dir }}/docker-compose.yml
+#     run --rm seedpsd-worker /bin/sh -lc '/app/.venv/bin/seedpsd-cli admin migrate --upgrade'
+#   register: seedpsd_migrate
+#   changed_when: seedpsd_migrate.rc == 0
+#   failed_when: seedpsd_migrate.rc not in [0]
+# - debug:
+#     msg:
+#       - "migrate rc: {{ seedpsd_migrate.rc }}"
+#       - "stdout: {{ seedpsd_migrate.stdout | default('') }}"
+#       - "stderr: {{ seedpsd_migrate.stderr | default('') }}"
+
+# # --- Initialise metadata & run in background ---
+# - name: SeedPSD metadata initialisation (idempotent; background)
+#   ansible.builtin.command: >
+#     /usr/bin/docker compose -f {{ seedpsd_dir }}/docker-compose.yml
+#     run --rm seedpsd-worker /bin/sh -lc '/app/.venv/bin/seedpsd-cli metadata update --config-path {{ internal_archive_sds_mnt }}'
+#   async: 45
+#   poll: 0
+
+# # --- Initialise data & run in background ---
+# - name: SeedPSD data initialisation for 2024 (idempotent; background)
+#   ansible.builtin.command: >
+#     /usr/bin/docker compose -f {{ seedpsd_dir }}/docker-compose.yml
+#     run --rm seedpsd-worker /bin/sh -lc '/app/.venv/bin/seedpsd-cli data load --config-path {{ internal_archive_sds_mnt }} --year 2024 --parallel --max-cpu 2'
+#   async: 45
+#   poll: 0
+
+# - name: SeedPSD data initialisation for 2025 (idempotent; background)
+#   ansible.builtin.command: >
+#     /usr/bin/docker compose -f {{ seedpsd_dir }}/docker-compose.yml
+#     run --rm seedpsd-worker /bin/sh -lc '/app/.venv/bin/seedpsd-cli data load --config-path {{ internal_archive_sds_mnt }} --year 2025 --parallel --max-cpu 2'
+#   async: 45
+#   poll: 0
+
+# # Grant RO user read access across shared + network_* schemas (simple, non-idempotent)
+# # Change network names based on networks present on your EIDA system
+# - name: Grant RO on shared and network_* schemas
+#   ansible.builtin.command: >
+#     /usr/bin/docker compose -f {{ seedpsd_dir }}/docker-compose.yml
+#     exec -T seedpsd-db psql -U {{ seedpsd_db_superuser }} -d {{ seedpsd_db_name }} -v ON_ERROR_STOP=1
+#     -c 'GRANT USAGE ON SCHEMA shared TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT SELECT ON ALL TABLES IN SCHEMA shared TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA shared TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA shared TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT USAGE ON SCHEMA "network_GB" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT SELECT ON ALL TABLES IN SCHEMA "network_GB" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA "network_GB" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "network_GB" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT USAGE ON SCHEMA "network_BN" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT SELECT ON ALL TABLES IN SCHEMA "network_BN" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA "network_BN" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "network_BN" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT USAGE ON SCHEMA "network_UR" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT SELECT ON ALL TABLES IN SCHEMA "network_UR" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA "network_UR" TO {{ seedpsd_db_ro_user }};'
+#     -c 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "network_UR" TO {{ seedpsd_db_ro_user }};'
+#   changed_when: false
+##### Initialisation ends here #####
+
+# --- Bring up the web after schema is ready ---
+- name: Bring up SeedPSD-Web
+  community.docker.docker_compose_v2:
+    project_src: "{{ seedpsd_dir }}"
+    state: present
+    pull: always
+    recreate: auto
+    services:
+      - seedpsd-web
+
+# --- Cron jobs ---
+# - name: Cron job for data ingest (daily 05:00)
+#   ansible.builtin.cron:
+#     name: seedpsd data ingest
+#     hour: "5"
+#     job: >-
+#       cd "{{ seedpsd_dir }}/" && /usr/bin/docker compose run --rm seedpsd-worker /bin/bash -lc '/app/.venv/bin/seedpsd-cli data load --config-path {{ internal_archive_sds_mnt }}'
+#     user: "{{ owner_name }}"
+
+# - name: SeedPSD metadata refresh (daily 06:00)
+#   ansible.builtin.cron:
+#     name: seedpsd metadata refresh
+#     hour: "6"
+#     job: >-
+#       cd "{{ seedpsd_dir }}/" && /usr/bin/docker compose run --rm seedpsd-worker /bin/bash -lc '/app/.venv/bin/seedpsd-cli metadata update  --config-path {{ internal_archive_sds_mnt }}'
+#     user: "{{ owner_name }}"

@@ -1,0 +1,34 @@
+---
+##### VM #####
+owner_name: "<owner_name>"
+group_name: "<group_name>"
+pg_rw_password: "<rw_password>"
+pg_ro_password: "<ro_password>"
+gpfs_dir: "/path/to/mounted/gpfs"
+
+###### SeedPSD ######
+home_dir: "/home/{{ owner_name }}"
+seedpsd_dir: "{{ home_dir }}/seedpsd"
+seedpsd_git_dir: "{{ seedpsd_dir }}/seedpsd-github"
+seedpsd_config_dir: "{{ seedpsd_dir }}/config"
+seedpsd_initdb_dir: "{{ seedpsd_dir }}/initdb"
+seedpsd_db_dir: "{{ seedpsd_dir }}/postgres"
+seedpsd_lib_dir: "{{ seedpsd_dir }}/lib"
+seedpsd_log_dir: "{{ seedpsd_dir }}/logs"
+internal_archive_sds_mnt: "/mnt/archive/"
+seedpsd_git_repo: "https://gricad-gitlab.univ-grenoble-alpes.fr/OSUG/RESIF/seedpsd.git"
+
+##### SeedPSD PostGres DB #####
+seedpsd_db_superuser: "postgres"
+seedpsd_db_superpass: "change-me"     # for container; used only at bootstrap
+seedpsd_db_name: "seedpsd"
+seedpsd_db_rw_user: "seedpsd"         # privileged role per docs
+seedpsd_db_rw_pass: "{{ pg_rw_password }}"
+seedpsd_db_ro_user: "wspsd"           # unprivileged role per docs
+seedpsd_db_ro_pass: "{{ pg_ro_password }}"
+# Service wiring
+seedpsd_listen_port: 8084
+seedpsd_allowed_hosts: "localhost,127.0.0.1,<DNS_name>"
+seedpsd_time_zone: "UTC"
+seedpsd_fdsn_client: "http://<DNS_name>"
+seedpsd_use_sds: "true"              # set true because archive is SDS; set false otherwise

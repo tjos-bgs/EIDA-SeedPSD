@@ -1,0 +1,6 @@
+---
+roles:
+  - name: geerlingguy.docker # what you would like for the role to be called
+    src: https://github.com/geerlingguy/ansible-role-docker.git # the http link if scm git/hg or galaxy namespace of the role
+    scm: git # git or hg if src is a link
+    version: 7.5.5 # tag, commit-ish, or branch name
