@@ -1,5 +1,5 @@
 #############################################
-FROM python:3.11-slim AS builder
+FROM python:3.13-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Enable bytecode compilation
@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
 #############################################
-FROM python:3.11-slim AS seedpsd
+FROM python:3.13-slim AS seedpsd
 
 # Create unprivileged user
 RUN addgroup --system app && \
